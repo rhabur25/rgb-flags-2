@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>US State Flags RGB Clustering</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f8f8f8; }
+        h1 { text-align: center; margin-top: 20px; }
+        #container { display: flex; flex-wrap: wrap; justify-content: center; }
+        #plot3d { width: 600px; height: 600px; background: #fff; border: 1px solid #ccc; margin: 20px; }
+        #clusters { flex: 1; min-width: 350px; max-width: 600px; margin: 20px; background: #fff; border: 1px solid #ccc; padding: 20px; }
+        .cluster-group { margin-bottom: 30px; }
+        .state-item { display: flex; align-items: center; margin-bottom: 6px; }
+        .state-item img { width: 32px; height: 20px; object-fit: contain; margin-right: 10px; border: 1px solid #ddd; }
+        .cluster-title { font-weight: bold; margin-bottom: 10px; color: #333; }
+    </style>
+</head>
+<body>
+    <h1>US State Flags: RGB Clustering</h1>
+
+    <div id="container">
+        <div id="plot3d" style="width: 600px; height: 600px;"></div>
+        <div id="clusters"></div>
+    </div>
+
+    <!-- Plotly.js CDN -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script>
+// List of state names (must match file names, e.g., Alabama.png)
+const stateNames = [
+    "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "Florida", "Georgia",
+    "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland",
+    "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New_Hampshire", "New_Jersey",
+    "New_Mexico", "New_York", "North_Carolina", "North_Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode_Island", "South_Carolina",
+    "South_Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West_Virginia", "Wisconsin", "Wyoming"
+];
+
+let flagData = [];
+let flagImages = {};
+
+// Automatically load all flag images from the workspace
+window.addEventListener('DOMContentLoaded', () => {
+    loadAllFlags();
+});
+
+function loadAllFlags() {
+    flagData = [];
+    flagImages = {};
+    let loaded = 0;
+    for (let state of stateNames) {
+        const img = new Image();
+        img.onload = function() {
+            flagImages[state] = img;
+            const {r, g, b} = getAverageRGB(img);
+            flagData.push({ state, r, g, b, img });
+            loaded++;
+            if (loaded === stateNames.length) {
+                processFlags();
+            }
+        };
+        img.onerror = function() {
+            loaded++;
+            if (loaded === stateNames.length) {
+                processFlags();
+            }
+        };
+        img.src = state + '.png';
+    }
+}
+
+function getAverageRGB(img) {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, img.width, img.height).data;
+    let r = 0, g = 0, b = 0, count = 0;
+    for (let i = 0; i < data.length; i += 4) {
+        r += data[i];
+        g += data[i+1];
+        b += data[i+2];
+        count++;
+    }
+    return { r: r/count/255, g: g/count/255, b: b/count/255 };
+}
+
+function processFlags() {
+    // Sort by state name for consistency
+    flagData.sort((a, b) => a.state.localeCompare(b.state));
+    // KMeans clustering
+    const points = flagData.map(f => [f.r, f.g, f.b]);
+    const clusters = kmeans(points, 4);
+    // Assign cluster to each flag
+    flagData.forEach((f, i) => f.cluster = clusters.assignments[i]);
+    draw3DPlot(flagData, clusters.centroids);
+    renderClusters(flagData, 4);
+}
+
+// Simple KMeans implementation
+function kmeans(data, k, maxIter=100) {
+    // Randomly initialize centroids
+    let centroids = [];
+    for (let i = 0; i < k; i++) {
+        centroids.push(data[Math.floor(Math.random()*data.length)].slice());
+    }
+    let assignments = new Array(data.length).fill(0);
+    for (let iter = 0; iter < maxIter; iter++) {
+        // Assign
+        for (let i = 0; i < data.length; i++) {
+            let minDist = Infinity, minIdx = 0;
+            for (let j = 0; j < k; j++) {
+                let d = dist(data[i], centroids[j]);
+                if (d < minDist) { minDist = d; minIdx = j; }
+            }
+            assignments[i] = minIdx;
+        }
+        // Update
+        let newCentroids = Array.from({length: k}, () => [0,0,0]);
+        let counts = Array(k).fill(0);
+        for (let i = 0; i < data.length; i++) {
+            let c = assignments[i];
+            newCentroids[c][0] += data[i][0];
+            newCentroids[c][1] += data[i][1];
+            newCentroids[c][2] += data[i][2];
+            counts[c]++;
+        }
+        for (let j = 0; j < k; j++) {
+            if (counts[j] > 0) {
+                newCentroids[j][0] /= counts[j];
+                newCentroids[j][1] /= counts[j];
+                newCentroids[j][2] /= counts[j];
+            } else {
+                // Reinitialize empty cluster
+                newCentroids[j] = data[Math.floor(Math.random()*data.length)].slice();
+            }
+        }
+        // Check for convergence
+        let converged = centroids.every((c, j) => dist(c, newCentroids[j]) < 1e-4);
+        centroids = newCentroids;
+        if (converged) break;
+    }
+    return { assignments, centroids };
+}
+function dist(a, b) {
+    return Math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2);
+}
+
+// 3D Plotting using Canvas (simple perspective)
+function draw3DPlot(data, centroids) {
+    // Assign a color to each cluster for visualization
+    const clusterColors = centroids.map(c => `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`);
+    // Prepare data for Plotly
+    let traces = [];
+    // Points by cluster
+    for (let i = 0; i < centroids.length; i++) {
+        const group = data.filter(f => f.cluster === i);
+        traces.push({
+            x: group.map(f => f.r),
+            y: group.map(f => f.g),
+            z: group.map(f => f.b),
+            text: group.map(f => f.state),
+            mode: 'markers',
+            type: 'scatter3d',
+            name: `Cluster ${i+1}`,
+            marker: {
+                size: 8,
+                color: clusterColors[i],
+                line: { width: 1, color: '#333' },
+                opacity: 0.85
+            }
+        });
+    }
+    // Centroids
+    traces.push({
+        x: centroids.map(c => c[0]),
+        y: centroids.map(c => c[1]),
+        z: centroids.map(c => c[2]),
+        mode: 'markers',
+        type: 'scatter3d',
+        name: 'Centroids',
+        marker: {
+            size: 18,
+            color: clusterColors,
+            line: { width: 3, color: '#fff' },
+            opacity: 0.9,
+            symbol: 'diamond'
+        },
+        text: centroids.map((c,i) => `Centroid ${i+1}`)
+    });
+    Plotly.newPlot('plot3d', traces, {
+        margin: { l: 0, r: 0, b: 0, t: 0 },
+        scene: {
+            xaxis: { title: 'Red', range: [0,1] },
+            yaxis: { title: 'Green', range: [0,1] },
+            zaxis: { title: 'Blue', range: [0,1] },
+            aspectmode: 'cube'
+        },
+        legend: { x: 0, y: 1 }
+    }, {responsive: true});
+}
+
+function renderClusters(data, k) {
+    const clustersDiv = document.getElementById('clusters');
+    clustersDiv.innerHTML = '';
+    for (let i = 0; i < k; i++) {
+        const group = data.filter(f => f.cluster === i);
+        group.sort((a, b) => a.state.localeCompare(b.state));
+        const div = document.createElement('div');
+        div.className = 'cluster-group';
+        div.innerHTML = `<div class="cluster-title">Cluster ${i+1} (${group.length} states)</div>`;
+        for (let f of group) {
+            const item = document.createElement('div');
+            item.className = 'state-item';
+            const img = document.createElement('img');
+            img.src = f.img.src;
+            img.alt = f.state;
+            item.appendChild(img);
+            item.appendChild(document.createTextNode(f.state));
+            div.appendChild(item);
+        }
+        clustersDiv.appendChild(div);
+    }
+}
+    </script>
+</body>
+</html>
